@@ -1,0 +1,7 @@
+# Only the test setup lives here; the integration itself is described by
+# custom_components/judo_rest_api/manifest.json. Run the tests with
+#   pip install pytest-homeassistant-custom-component
+#   pytest tests
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
