@@ -67,6 +67,7 @@ class RestItem:
         params: dict = None,
         entity_category: EntityCategory = None,
         read_endian: str = "little",
+        families: frozenset[str] | None = None,
     ) -> None:
         """Initialise RestItem."""
         self._translation_key = translation_key
@@ -83,6 +84,7 @@ class RestItem:
         self._resultlist = resultlist
         self._params = params
         self._read_endian = read_endian
+        self._families = families
 
     @property
     def params(self) -> dict:
@@ -97,6 +99,14 @@ class RestItem:
     def key(self) -> str:
         """Return the key this item's value is stored under in the coordinator."""
         return self._device + "_" + self._translation_key
+
+    def supports(self, family: str) -> bool:
+        """Return whether a device of this family knows this item.
+
+        None means every family: the info commands every page of the API
+        document shares.
+        """
+        return self._families is None or family in self._families
 
     @property
     def read_endian(self) -> str:

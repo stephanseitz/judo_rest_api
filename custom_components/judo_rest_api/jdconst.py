@@ -11,7 +11,7 @@ from homeassistant.const import (
 from homeassistant.helpers.entity import EntityCategory
 
 
-from .const import DEVICES, FORMATS, TYPES
+from .const import DEVICES, FAMILIES, FORMATS, TYPES
 from .items import RestItem, StatusItem
 
 ################################################################################
@@ -22,13 +22,24 @@ from .items import RestItem, StatusItem
 
 # fmt: off
 
-UNIT_STATUS: list[StatusItem] = [
-    StatusItem(number=0, translation_key="ge_hardness"),
-    StatusItem(number=1, translation_key="en_hardness"),
-    StatusItem(number=2, translation_key="fr_hardness"),
-    StatusItem(number=3, translation_key="ppm"),
-    StatusItem(number=4, translation_key="mmol"),
-    StatusItem(number=5, translation_key="mval"),
+# Hardness unit of commands 23 / 24, as listed on every softener page.
+HARDNESS_UNIT: list[StatusItem] = [
+    StatusItem(number=0, translation_key="unit_dh"),
+    StatusItem(number=1, translation_key="unit_eh"),
+    StatusItem(number=2, translation_key="unit_fh"),
+    StatusItem(number=3, translation_key="unit_gpg"),
+    StatusItem(number=4, translation_key="unit_ppm"),
+    StatusItem(number=5, translation_key="unit_mmol"),
+    StatusItem(number=6, translation_key="unit_mval"),
+]
+
+# Bits 0..3 of command 41 on the SAFE+: bit 0 "holiday mode active", then one
+# bit each for U1, U2 and U3. The document's own example 410003 activates U1.
+VACATION_MODE: list[StatusItem] = [
+    StatusItem(number=0x00, translation_key="vacation_off"),
+    StatusItem(number=0x03, translation_key="vacation_u1"),
+    StatusItem(number=0x05, translation_key="vacation_u2"),
+    StatusItem(number=0x09, translation_key="vacation_u3"),
 ]
 
 UNIT_TYPE: list[StatusItem] = [
@@ -287,39 +298,165 @@ PARAMS_MASS_REFILL: dict = {
     # entity can be set in anyway, and far below what one regeneration uses.
     "deadband": 0.05,
 }
+# The SAFE+ answers 3E, 3F, 40 and 41 with an empty payload: they can be
+# written, not read. What these entities show is what was last written from
+# Home Assistant, restored across restarts, and unknown until then.
+PARAMS_MAX_DURATION: dict = {
+    "min": 0,
+    "max": 255,
+    "step": 1,
+    "precision": 0,
+    "unit": UnitOfTime.MINUTES,
+    "stateclass": None,
+    "icon": "mdi:timer-alert-outline",
+    "mode": "box",
+}
+
+# The SAFE+ page labels 3F "Max. Entnahmemenge" and 40 "Max. Volumenstrom",
+# but its descriptions and examples have the two the other way round. The
+# labels agree with the i-soft PRO page, whose descriptions match them (3F in
+# litres, 40 in l/h), and with the ZEWA page, where "Volumenstrom" is always
+# l/h and "Entnahmemenge" always litres. So the labels are taken as right.
+PARAMS_MAX_VOLUME: dict = {
+    "min": 0,
+    "max": 65535,
+    "step": 1,
+    "precision": 0,
+    "unit": UnitOfVolume.LITERS,
+    "stateclass": None,
+    "icon": "mdi:water-alert-outline",
+    "mode": "box",
+}
+
+PARAMS_MAX_FLOW: dict = {
+    "min": 0,
+    "max": 65535,
+    "step": 1,
+    "precision": 0,
+    "unit": UnitOfVolumeFlowRate.LITERS_PER_HOUR,
+    "stateclass": None,
+    "icon": "mdi:water-pump",
+    "mode": "box",
+}
+
+PARAMS_HARDNESS_UNIT: dict = {
+    "icon": "mdi:water-opacity",
+}
+
+# Command 41 carries the holiday mode and three leakage settings in one byte.
+# It cannot be read back, so writing one of them means writing all of them:
+# each entity names the byte and the bits it owns, and the byte is assembled
+# from all of them. Until every part is known nothing is sent, so a holiday
+# mode switched on from here can never silently reset the micro leakage
+# settings made in the app.
+PARAMS_VACATION: dict = {
+    "icon": "mdi:beach",
+    "bitfield": "leakage_settings",
+    "mask": 0x0F,
+}
+
+PARAMS_MICRO_LEAKAGE_CLOSE: dict = {
+    "icon": "mdi:pipe-valve",
+    "bitfield": "leakage_settings",
+    "mask": 0x20,
+}
+
+PARAMS_MICRO_LEAKAGE_TEST: dict = {
+    "icon": "mdi:water-check",
+    "bitfield": "leakage_settings",
+    "mask": 0x40,
+}
+
+PARAMS_LEAKAGE_PROTECTION_OFF: dict = {
+    "icon": "mdi:shield-off-outline",
+    "bitfield": "leakage_settings",
+    "mask": 0x80,
+}
+
+PARAMS_WATER_TODAY: dict = {
+    "precision": 0,
+    "unit": UnitOfVolume.LITERS,
+    # Resets at midnight; HA reads a drop of a TOTAL_INCREASING value as a new
+    # cycle.
+    "stateclass": SensorStateClass.TOTAL_INCREASING,
+    "deviceclass": SensorDeviceClass.WATER,
+    "icon": "mdi:water-outline",
+    # The day only moves in 3-hour buckets that fill up slowly; there is no
+    # point in asking for it on every scan.
+    "poll_interval": 300,
+}
+
+# Which family serves which item. See FamilyConstants in const.py.
+SOFTENERS = frozenset({FAMILIES.I_SOFT, FAMILIES.SAFE_PLUS, FAMILIES.PRO})
+# i-soft and SAFE+ pages: little-endian counters, commissioning date as unix
+# time, statistics in fixed 3-hour buckets.
+CLASSIC = frozenset({FAMILIES.I_SOFT, FAMILIES.SAFE_PLUS})
+# SOFTwell knows the counters and the statistics, but no salt, no hardness and
+# none of the controls.
+WITH_COUNTERS = CLASSIC | {FAMILIES.SOFTWELL}
+NOT_PRO = frozenset({FAMILIES.I_SOFT, FAMILIES.SAFE_PLUS, FAMILIES.SOFTWELL, FAMILIES.OTHER})
+PRO = frozenset({FAMILIES.PRO})
+SAFE_PLUS = frozenset({FAMILIES.SAFE_PLUS})
+
 # pylint: disable=line-too-long
 
 # fmt: off
 REST_SYS_ITEMS: list[RestItem] = [
     RestItem( address_read="FF00", read_bytes = 1, read_index=0, mformat=FORMATS.STATUS, mtype=TYPES.SENSOR, device=DEVICES.SYS, resultlist=UNIT_TYPE, params=PARAMS_INFO, translation_key="device_type", entity_category=EntityCategory.DIAGNOSTIC),
-    RestItem( address_read="0600", read_bytes = 4, read_index=0, read_endian="big", mformat=FORMATS.SERIAL, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_SERIAL, translation_key="device_number", entity_category=EntityCategory.DIAGNOSTIC),
+    # Byte order differs by family: the PRO page's example only works
+    # big-endian, every other page's only little-endian. Confirmed on an
+    # i-soft PRO (big) and an i-soft SAFE+ on 3.02 (little, 205703 as in the app).
+    RestItem( address_read="0600", read_bytes = 4, read_index=0, read_endian="big", mformat=FORMATS.SERIAL, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_SERIAL, translation_key="device_number", entity_category=EntityCategory.DIAGNOSTIC, families=PRO),
+    RestItem( address_read="0600", read_bytes = 4, read_index=0, mformat=FORMATS.SERIAL, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_SERIAL, translation_key="device_number", entity_category=EntityCategory.DIAGNOSTIC, families=NOT_PRO),
     RestItem( address_read="0100", read_bytes = 3, read_index=0, mformat=FORMATS.SW_VERSION, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_INFO, translation_key="software_version", entity_category=EntityCategory.DIAGNOSTIC),
 
-    RestItem( address_read="5100", read_bytes = 2, read_index=0, address_write="3000", write_bytes = 1, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params=PARAMS_GDH,translation_key="water_hardeness"),
-    RestItem( address_read="5700", read_bytes = 1, read_index=0, address_write="5700", write_bytes = 1, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params=PARAMS_DAYS,translation_key="salt_warning", entity_category=EntityCategory.CONFIG),
+    RestItem( address_read="5100", read_bytes = 2, read_index=0, address_write="3000", write_bytes = 1, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params=PARAMS_GDH,translation_key="water_hardeness", families=SOFTENERS),
+    RestItem( address_read="5700", read_bytes = 1, read_index=0, address_write="5700", write_bytes = 1, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params=PARAMS_DAYS,translation_key="salt_warning", entity_category=EntityCategory.CONFIG, families=SOFTENERS),
 
 #   RestItem( address_read="5600", read_bytes = 2, read_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_MASS, translation_key="salt_storage_mass"),
-    RestItem( address_read="5600", read_bytes = 2, read_index=0, address_write="5600", write_bytes = 2, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params=PARAMS_MASS_REFILL, translation_key="salt_storage_mass", entity_category=EntityCategory.CONFIG),
-    RestItem( address_read="5600", read_bytes = 2, read_index=2, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_DAYS, translation_key="salt_storage_days"),
+    RestItem( address_read="5600", read_bytes = 2, read_index=0, address_write="5600", write_bytes = 2, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params=PARAMS_MASS_REFILL, translation_key="salt_storage_mass", entity_category=EntityCategory.CONFIG, families=SOFTENERS),
+    RestItem( address_read="5600", read_bytes = 2, read_index=2, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_DAYS, translation_key="salt_storage_days", families=SOFTENERS),
 
-    RestItem( address_read="2800", read_bytes = 4, read_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_QBM_H, translation_key="water_total"),
-    RestItem( address_read="2900", read_bytes = 4, read_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_QBM_W, translation_key="water_treated"),
+    RestItem( address_read="2800", read_bytes = 4, read_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_QBM_H, translation_key="water_total", families=SOFTENERS),
+    RestItem( address_read="2900", read_bytes = 4, read_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_QBM_W, translation_key="water_treated", families=SOFTENERS | WITH_COUNTERS),
 
-    RestItem( address_read="5800", read_bytes = 16, read_index=0, mformat=FORMATS.TEXT, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_CONTACT, translation_key="service_contact", entity_category=EntityCategory.DIAGNOSTIC),
-    RestItem( address_read="2500", read_bytes = 4, read_index=0, read_endian="big", mformat=FORMATS.DURATION, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_OPERATING_TIME, translation_key="operating_time", entity_category=EntityCategory.DIAGNOSTIC),
-    RestItem( address_read="0E00", read_bytes = 4, read_index=0, mformat=FORMATS.DATE, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_DATE, translation_key="install_date", entity_category=EntityCategory.DIAGNOSTIC),
+    RestItem( address_read="5800", read_bytes = 16, read_index=0, mformat=FORMATS.TEXT, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_CONTACT, translation_key="service_contact", entity_category=EntityCategory.DIAGNOSTIC, families=SOFTENERS),
+    # The day counter is big-endian on the PRO and little-endian elsewhere: an
+    # i-soft SAFE+ reports 2102 days little-endian, exactly the days since the
+    # commissioning date it reports itself.
+    RestItem( address_read="2500", read_bytes = 4, read_index=0, read_endian="big", mformat=FORMATS.DURATION, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_OPERATING_TIME, translation_key="operating_time", entity_category=EntityCategory.DIAGNOSTIC, families=PRO),
+    RestItem( address_read="2500", read_bytes = 4, read_index=0, mformat=FORMATS.DURATION, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_OPERATING_TIME, translation_key="operating_time", entity_category=EntityCategory.DIAGNOSTIC, families=WITH_COUNTERS),
+    # Day, month, year on the PRO; unix time on the SAFE+, which only the
+    # original integration's reading of it as a timestamp gets right.
+    RestItem( address_read="0E00", read_bytes = 4, read_index=0, mformat=FORMATS.DATE, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_DATE, translation_key="install_date", entity_category=EntityCategory.DIAGNOSTIC, families=PRO),
+    RestItem( address_read="0E00", read_bytes = 4, read_index=0, mformat=FORMATS.TIMESTAMP_DATE, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_DATE, translation_key="install_date", entity_category=EntityCategory.DIAGNOSTIC, families=WITH_COUNTERS),
 
-    RestItem(address_write="3C00", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params=PARAMS_CLOSE, translation_key="leakage_protection_close"),
-    RestItem(address_write="3D00", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params=PARAMS_OPEN, translation_key="leakage_protection_open"),
-    RestItem(address_write="350000", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params=PARAMS_REG, translation_key="start_regeneration"),
+    RestItem( address_read="FB00", read_bytes = 32, read_index=0, mformat=FORMATS.DAY_STATISTICS, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_WATER_TODAY, translation_key="water_today", families=WITH_COUNTERS),
 
-    RestItem(address_read="6900", read_bytes = 1, read_index=0, address_write="3600", write_bytes = 3, write_index=0, mformat=FORMATS.SCENE, mtype=TYPES.SCENE, device=DEVICES.SYS, resultlist=SCENE_LIST, params=PARAMS_SCENE, translation_key="water_scene"),
+    RestItem(address_write="3C00", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params=PARAMS_CLOSE, translation_key="leakage_protection_close", families=SOFTENERS),
+    RestItem(address_write="3D00", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params=PARAMS_OPEN, translation_key="leakage_protection_open", families=SOFTENERS),
+    RestItem(address_write="350000", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params=PARAMS_REG, translation_key="start_regeneration", families=SOFTENERS),
+
+    RestItem( address_read="2300", read_bytes = 1, read_index=0, address_write="2400", write_bytes = 1, write_index=0, mformat=FORMATS.STATUS, mtype=TYPES.SELECT, device=DEVICES.SYS, resultlist=HARDNESS_UNIT, params=PARAMS_HARDNESS_UNIT, translation_key="hardness_unit", entity_category=EntityCategory.CONFIG, families=CLASSIC),
+
+    RestItem(address_write="3E00", write_bytes = 1, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params=PARAMS_MAX_DURATION, translation_key="max_extraction_duration", entity_category=EntityCategory.CONFIG, families=SAFE_PLUS),
+    RestItem(address_write="3F00", write_bytes = 2, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params=PARAMS_MAX_VOLUME, translation_key="max_extraction_volume", entity_category=EntityCategory.CONFIG, families=SAFE_PLUS),
+    RestItem(address_write="4000", write_bytes = 2, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params=PARAMS_MAX_FLOW, translation_key="max_flow_rate", entity_category=EntityCategory.CONFIG, families=SAFE_PLUS),
+
+    RestItem(address_write="4100", write_bytes = 1, write_index=0, mformat=FORMATS.STATUS, mtype=TYPES.BITFIELD_SELECT, device=DEVICES.SYS, resultlist=VACATION_MODE, params=PARAMS_VACATION, translation_key="vacation_mode", families=SAFE_PLUS),
+    RestItem(address_write="4100", write_bytes = 1, write_index=0, mformat=FORMATS.STATUS, mtype=TYPES.BITFIELD_SWITCH, device=DEVICES.SYS, params=PARAMS_MICRO_LEAKAGE_CLOSE, translation_key="micro_leakage_close", entity_category=EntityCategory.CONFIG, families=SAFE_PLUS),
+    RestItem(address_write="4100", write_bytes = 1, write_index=0, mformat=FORMATS.STATUS, mtype=TYPES.BITFIELD_SWITCH, device=DEVICES.SYS, params=PARAMS_MICRO_LEAKAGE_TEST, translation_key="micro_leakage_auto_test", entity_category=EntityCategory.CONFIG, families=SAFE_PLUS),
+    RestItem(address_write="4100", write_bytes = 1, write_index=0, mformat=FORMATS.STATUS, mtype=TYPES.BITFIELD_SWITCH, device=DEVICES.SYS, params=PARAMS_LEAKAGE_PROTECTION_OFF, translation_key="leakage_protection_off", entity_category=EntityCategory.CONFIG, families=SAFE_PLUS),
+
+    # Water scenes and command 69 exist on the PRO family only. The SAFE+ app
+    # shows scenes too, but the device answers 6900 and 3700xx with 400.
+    RestItem(address_read="6900", read_bytes = 1, read_index=0, address_write="3600", write_bytes = 3, write_index=0, mformat=FORMATS.SCENE, mtype=TYPES.SCENE, device=DEVICES.SYS, resultlist=SCENE_LIST, params=PARAMS_SCENE, translation_key="water_scene", families=PRO),
     # All of these come out of one 6900 answer, which the coordinator fetches
     # once per scan. Command 69 needs device software newer than 1.5.31.
-    RestItem( address_read="6900", read_bytes = 2, read_index=4, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_FLOW, translation_key="water_flow"),
-    RestItem( address_read="6900", read_bytes = 2, read_index=10, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_TEMPERATURE, translation_key="water_temperature"),
+    RestItem( address_read="6900", read_bytes = 2, read_index=4, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_FLOW, translation_key="water_flow", families=PRO),
+    RestItem( address_read="6900", read_bytes = 2, read_index=10, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params=PARAMS_TEMPERATURE, translation_key="water_temperature", families=PRO),
 
-    RestItem(mformat=FORMATS.SCENE_DURATION, mtype=TYPES.SELECT_LOCAL, device=DEVICES.SYS, resultlist=SCENE_DURATION_LIST, params=PARAMS_SCENE_DURATION, translation_key="water_scene_duration"),
+    RestItem(mformat=FORMATS.SCENE_DURATION, mtype=TYPES.SELECT_LOCAL, device=DEVICES.SYS, resultlist=SCENE_DURATION_LIST, params=PARAMS_SCENE_DURATION, translation_key="water_scene_duration", families=PRO),
 
 #    RestItem(address_read="5600", read_bytes = 2, read_index=0,address_write="5600", write_bytes = 2, write_index=0, mformat=FORMATS.STATUS, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MASS_REFILL, resultlist=SALT_MASS, translation_key="salt_refill_mass"),
 ]

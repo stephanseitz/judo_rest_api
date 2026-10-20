@@ -1,3 +1,36 @@
+# Version 1.4.0
+Support for the **i-soft SAFE+** (device types 0x33, 0x57, and the i-soft K SAFE+ 0x42, 0x67), checked against a SAFE+ on device software 3.02. This fork lives at https://github.com/stephanseitz/judo_rest_api and builds on the work of OStrama and ischraub.
+
+**Device families.** Every device used to get every entity, although the API document gives each family its own command set - and the same code does different things on different devices: on a ZEWA i-SAFE `5100` closes the leakage protection and `5700` starts the holiday mode, where a softener reads its target hardness and salt warning. The device type read at setup now picks the family, and a device only gets the entities its own page of the document lists:
+
+| Family | Device types | Entities |
+|---|---|---|
+| i-soft SAFE+ | 0x33, 0x57, 0x42, 0x67 | softener entities, hardness unit, leakage limits, holiday mode, micro leakage settings, water today |
+| i-soft | 0x32, 0x53, 0x43, 0x54, and softener types the document does not list | softener entities, hardness unit, water today |
+| i-soft PRO | 0x58, 0x4b, 0x4c | as in 1.3: softener entities, water scenes, flow and temperature from command 69 |
+| SOFTwell | 0x34, 0x59, 0x35, 0x63, 0x36, 0x5a, 0x47, 0x62, 0x48, 0x64 | counters, water treated, water today |
+| everything else (ZEWA, i-dos, i-fill, unknown) | | device type, number and software version only |
+
+Entities a device's family does not have are removed on upgrade. On a SAFE+ these are the water scene, scene duration, flow and temperature, which could never work: the device answers command 69 and the scene commands with 400.
+
+**Decoding by family.** The PRO family stores the device number and the operating day counter big-endian and the commissioning date as day/month/year. The i-soft family - the SAFE+ among it - does not: there both counters are little-endian and the commissioning date is unix time. 1.3 applied the PRO layout to every device, which on a SAFE+ showed 13832 operating days instead of 2102 and no commissioning date at all. Checked against the Judo app: device number 205703, 2102 days since the commissioning on 17.01.2021.
+
+**New entities on the i-soft SAFE+**
+* **Hardness unit** (select, commands 23 / 24). Also on the i-soft family.
+* **Max. extraction duration** (3E, minutes), **max. extraction volume** (3F, litres), **max. flow rate** (40, l/h). The SAFE+ page labels 3F and 40 one way and describes them the other way round; the labels agree with the PRO and ZEWA pages and are taken as right.
+* **Holiday mode** (select Off / U1 / U2 / U3) and the switches **close on micro leakage**, **automatic micro leakage test** and **leakage protection globally OFF** - all four live in the one byte of command 41.
+* **Water consumption today** in litres, from the day statistics (command FB), with the eight 3-hour buckets as attributes. Asked for every 5 minutes, not on every scan. Also on the i-soft and SOFTwell families.
+
+**Write only.** The SAFE+ answers 3E, 3F, 40 and 41 with an empty payload: they can be set, not read. These entities show what was last set from Home Assistant, keep it across restarts, and are unknown until then. Command 41 always writes the holiday mode and the three leakage settings together, so nothing is sent until all four are known - otherwise switching on the holiday mode would silently reset the micro leakage settings made in the app. After installing, set the three switches once to match the Judo app (Einstellungen -> Kleinleckageprüfung; leakage protection globally OFF is off as long as the app says "Leckageschutz aktiv"), then the holiday mode. The first ones report "saved, but not sent yet"; the last one sends the byte.
+
+**Fixes**
+* A select that reads its value back now sets the chosen option. It used to add the option to the current value - harmless only because no such select existed yet.
+* A value that lives in Home Assistant only - the scene duration of the PRO family - was lost on the next scan and fell back to its default.
+* Downloading diagnostics failed: the loop over the items overwrote the config entry it was called with.
+* The bench tool sends each statistics command the date argument it expects (day, week, month or year) and the year in the family's byte order.
+
+**Upgrading from the original integration** (OStrama, 1.0.x): see the notes on 1.1.0 below. Most visibly, the three operating time sensors (minutes, hours, days) are replaced by one combined operating time sensor, and the commissioning date becomes a date without a time of day.
+
 # Version 1.3.2
 * `hacs.json` sets `hide_default_branch`, so HACS can only track releases and never the `main` branch. A repository that offers both can end up comparing the installed release against the branch head, which makes the update check look broken.
 
@@ -104,7 +137,7 @@ Added control for changing salt mass. The control shows the current salt mass. W
 
 # judo_rest_api
 Home Assistant integration to connect to judo water treatment directly via REST API based on this documentation:
-https://judo.eu/app/uploads/2024/11/API-KOMMANDOZEILEN.pdf
+https://judo.eu/ftp-upload/download/REST-API/RESTAPI_Kommandos.pdf (linked from https://judo.eu/produkte/api/)
 Some more basic info can be found here: https://judo.eu/app/downloads/files/de/8203521/manuals/1702574_202405.pdf
 
 Please have a look here to learn more about the communication module that provides the REST API:
@@ -126,7 +159,7 @@ This integration lets you monitor and control your Judo water treatment device l
 
 Add this repository to HACS.
 * In the HACS GUI, select "Custom repositories"
-* Enter the following repository URL: https://github.com/OStrama/judo_rest_api
+* Enter the following repository URL: https://github.com/stephanseitz/judo_rest_api
 * Category: Integration
 * After adding the integration, restart Home Assistant.
 * Now press the button "Add Integration" in Configuration -> Integrations to install it in Home assistant.

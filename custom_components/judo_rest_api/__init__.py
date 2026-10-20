@@ -11,6 +11,7 @@ from homeassistant.helpers import entity_registry as er
 from .configentry import MyConfigEntry, MyData
 from .const import CONF, CONST
 from .coordinator import MyCoordinator
+from .entities import unique_id_of
 from .jdconst import DEVICELISTS
 from .restobject import RestAPI
 
@@ -27,6 +28,7 @@ PLATFORMS: list[str] = [
     "select",
     "sensor",
     "button",
+    "switch",
 ]
 
 
@@ -77,6 +79,35 @@ async def _async_remove_retired_entities(
             registry.async_remove(registry_entry.entity_id)
 
 
+@callback
+def _async_remove_foreign_entities(
+    hass: HomeAssistant, entry: MyConfigEntry, coordinator: MyCoordinator
+) -> None:
+    """Drop entities the device's family does not have.
+
+    Up to 1.3 every device got every entity. On an i-soft SAFE+ that meant a
+    water scene, a scene duration, a flow and a temperature sensor that could
+    never work, because the device answers command 69 and the scene commands
+    with 400. Only entities of items this integration knows are touched, and
+    only those the device's family has no item for.
+    """
+    wanted = {unique_id_of(entry, item) for item in coordinator.items}
+    foreign = {unique_id_of(entry, item) for item in coordinator.all_items} - wanted
+    if not foreign:
+        return
+    registry = er.async_get(hass)
+    for registry_entry in list(
+        er.async_entries_for_config_entry(registry, entry.entry_id)
+    ):
+        if registry_entry.unique_id in foreign:
+            _LOGGER.info(
+                "Removing %s, a %s device does not support it",
+                registry_entry.entity_id,
+                coordinator.family,
+            )
+            registry.async_remove(registry_entry.entity_id)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     """Set up entry."""
     if entry.unique_id is None:
@@ -101,6 +132,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     # retries instead of loading an integration that can never produce data.
     await coordinator.async_config_entry_first_refresh()
     await coordinator.async_update_device_info()
+    _async_remove_foreign_entities(hass, entry, coordinator)
 
     entry.runtime_data = MyData(
         rest_api=restapi,

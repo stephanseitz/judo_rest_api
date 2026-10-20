@@ -61,6 +61,15 @@
       },
       "salt_storage_mass": {
         "name": "Salzvorrat Masse gesamt"
+      },
+      "max_extraction_duration": {
+        "name": "Max. Entnahmedauer"
+      },
+      "max_extraction_volume": {
+        "name": "Max. Entnahmemenge"
+      },
+      "max_flow_rate": {
+        "name": "Max. Durchfluss"
       }
     },
     "button": {
@@ -115,6 +124,27 @@
           "duration_6_h": "6 Stunden",
           "duration_12_h": "12 Stunden",
           "duration_unlimited": "Unbegrenzt"
+        }
+      },
+      "hardness_unit": {
+        "name": "Härteeinheit",
+        "state": {
+          "unit_dh": "°dH",
+          "unit_eh": "°eH",
+          "unit_fh": "°fH",
+          "unit_gpg": "gpg",
+          "unit_ppm": "ppm",
+          "unit_mmol": "mmol/l",
+          "unit_mval": "mval/l"
+        }
+      },
+      "vacation_mode": {
+        "name": "Urlaubsmodus",
+        "state": {
+          "vacation_off": "Aus",
+          "vacation_u1": "U1",
+          "vacation_u2": "U2",
+          "vacation_u3": "U3"
         }
       }
     },
@@ -193,6 +223,20 @@
       },
       "water_temperature": {
         "name": "Wassertemperatur"
+      },
+      "water_today": {
+        "name": "Wasserverbrauch heute"
+      }
+    },
+    "switch": {
+      "micro_leakage_close": {
+        "name": "Bei Kleinleckage schließen"
+      },
+      "micro_leakage_auto_test": {
+        "name": "Automatische Kleinleckageprüfung"
+      },
+      "leakage_protection_off": {
+        "name": "Leckageschutz global AUS"
       }
     }
   },
