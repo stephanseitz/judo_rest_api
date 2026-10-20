@@ -4,10 +4,10 @@ from dataclasses import dataclass
 
 from homeassistant.const import (
     CONF_HOST,
-    CONF_PORT,
     CONF_PASSWORD,
-    CONF_USERNAME,
+    CONF_PORT,
     CONF_SCAN_INTERVAL,
+    CONF_USERNAME,
 )
 
 

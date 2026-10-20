@@ -1,8 +1,8 @@
 """Build entitiy List and Update Coordinator."""
 
 import logging
+
 from .configentry import MyConfigEntry
-from .items import RestItem
 from .const import TYPES
 from .coordinator import MyCoordinator
 from .entities import (
@@ -15,6 +15,7 @@ from .entities import (
     MySelectEntity,
     MySensorEntity,
 )
+from .items import RestItem
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -1,15 +1,14 @@
-"""Heatpump constants."""
+"""Description of the items of the Judo REST API, per device family."""
 
-from homeassistant.components.sensor import SensorStateClass, SensorDeviceClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import (
-    UnitOfTemperature,
-    UnitOfVolumeFlowRate,
     UnitOfMass,
-    UnitOfVolume,
+    UnitOfTemperature,
     UnitOfTime,
+    UnitOfVolume,
+    UnitOfVolumeFlowRate,
 )
 from homeassistant.helpers.entity import EntityCategory
-
 
 from .const import DEVICES, FAMILIES, FORMATS, TYPES
 from .items import RestItem, StatusItem

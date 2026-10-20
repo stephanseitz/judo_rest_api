@@ -1,14 +1,16 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Account is already configured"
+      "already_configured": "Account is already configured",
+      "reconfigure_successful": "Re-configuration was successful"
     },
     "error": {
       "cannot_connect": "Failed to connect",
       "invalid_auth": "Invalid authentication",
       "unknown": "Unexpected error",
       "invalid_host": "Host name or IP address is not valid",
-      "postfix_in_use": "This device postfix is already used by another entry. Give each device its own postfix."
+      "postfix_in_use": "This device postfix is already used by another entry. Give each device its own postfix.",
+      "host_in_use": "This host is already used by another entry."
     },
     "step": {
       "user": {
@@ -27,7 +29,6 @@
       },
       "reconfigure": {
         "data": {
-          "Device-Postfix": "Device postfix",
           "scan_interval": "API poll interval (default = 60 sec)",
           "host": "Host name or IP address",
           "port": "HTTP Port",

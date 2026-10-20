@@ -1,3 +1,13 @@
+# Version 1.4.1
+Fixes from a review of the whole repository.
+
+* A refused password now says "Invalid authentication" in the setup dialog. It used to say "Failed to connect", which sent you looking for a network problem although the device was answering.
+* The device postfix can no longer be changed in the reconfigure dialog. It is part of every unique id: changing it orphaned all entities with their history and created a second set.
+* Changing the host in the reconfigure dialog also moves the entry's unique id to the new host, and is refused when another entry already uses that host. Before, the old address stayed blocked for a new device while a second entry for the same device was let through.
+* `hacs.json` declares Home Assistant 2024.11 as the minimum, so HACS says so before installing instead of the integration failing to load.
+* The tests run on every push and pull request.
+* Removed a VS Code workspace file of the original author that was installed with the integration, and the unused `info.md`.
+
 # Version 1.4.0
 Support for the **i-soft SAFE+** (device types 0x33, 0x57, and the i-soft K SAFE+ 0x42, 0x67), checked against a SAFE+ on device software 3.02. This fork lives at https://github.com/stephanseitz/judo_rest_api and builds on the work of OStrama and ischraub.
 
