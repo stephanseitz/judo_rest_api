@@ -15,7 +15,6 @@ from homeassistant.core import HomeAssistant
 
 from .configentry import MyConfigEntry
 from .const import CONF
-from .jdconst import DEVICELISTS
 
 # Only the password is a secret. The user name is not, and a wrong one is
 # just as invisible as a wrong password was until it shows up here.
@@ -30,30 +29,29 @@ async def async_get_config_entry_diagnostics(
     data = coordinator.data or {}
 
     items = []
-    for device in DEVICELISTS:
-        for item in device:
-            item_value = data.get(item.key)
-            failure = coordinator.last_error(item.key)
-            entry = {
-                "translation_key": item.translation_key,
-                "address_read": item.address_read,
-                "address_write": item.address_write,
-                "read_index": item.read_index,
-                "read_bytes": item.read_bytes,
-                "read_endian": item.read_endian,
-                "format": item.format,
-                "raw": item_value.raw if item_value else None,
-                "value": str(item_value.value) if item_value else None,
-            }
-            if failure is not None:
-                # The payload of a failed item is the whole point of looking
-                # here, so it is reported even though it did not decode.
-                raw, message = failure
-                entry["raw"] = raw
-                entry["error"] = message
-                if raw is not None:
-                    entry["raw_bytes"] = len(raw) // 2
-            items.append(entry)
+    for item in coordinator.items:
+        item_value = data.get(item.key)
+        failure = coordinator.last_error(item.key)
+        row = {
+            "translation_key": item.translation_key,
+            "address_read": item.address_read,
+            "address_write": item.address_write,
+            "read_index": item.read_index,
+            "read_bytes": item.read_bytes,
+            "read_endian": item.read_endian,
+            "format": item.format,
+            "raw": item_value.raw if item_value else None,
+            "value": str(item_value.value) if item_value else None,
+        }
+        if failure is not None:
+            # The payload of a failed item is the whole point of looking
+            # here, so it is reported even though it did not decode.
+            raw, message = failure
+            row["raw"] = raw
+            row["error"] = message
+            if raw is not None:
+                row["raw_bytes"] = len(raw) // 2
+        items.append(row)
 
     return {
         "config": {
@@ -62,6 +60,7 @@ async def async_get_config_entry_diagnostics(
             if key not in TO_REDACT
         },
         "devicetype": coordinator.rest_api.get_devicetype(),
+        "family": coordinator.family,
         "last_update_success": coordinator.last_update_success,
         "scan_interval": coordinator.update_interval.total_seconds()
         if coordinator.update_interval

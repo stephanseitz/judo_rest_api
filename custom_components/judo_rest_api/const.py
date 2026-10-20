@@ -63,6 +63,10 @@ class FormatConstants:
     STATUS = "status"
     BUTTON = "Button"
     DATE = "Date"
+    # Unix time, 4 byte big-endian, reduced to its date (i-soft, SAFE+).
+    TIMESTAMP_DATE = "TimestampDate"
+    # Eight 3-hour buckets of 4 byte big-endian litres (command FB).
+    DAY_STATISTICS = "DayStatistics"
     DURATION = "Duration"
     SCENE = "Scene"
     SCENE_DURATION = "SceneDuration"
@@ -87,6 +91,9 @@ class TypeConstants:
     NUMBER = "Number"
     NUMBER_RO = "Number_RO"
     BUTTON = "Button"
+    # One field of a write-only bitfield (command 41 on the SAFE+).
+    BITFIELD_SELECT = "Bitfield_select"
+    BITFIELD_SWITCH = "Bitfield_switch"
 
 
 TYPES = TypeConstants()
@@ -102,6 +109,76 @@ class DeviceConstants:
 
 
 DEVICES = DeviceConstants()
+
+
+@dataclass(frozen=True)
+class FamilyConstants:
+    """Device families: devices that share one page of the API document.
+
+    The command set differs a lot between them. The same code means different
+    things on different devices - on a ZEWA i-SAFE 5100 closes the leakage
+    protection, on a softener it reads the target hardness - so a device only
+    gets the items its own page documents.
+    """
+
+    I_SOFT = "i_soft"
+    SAFE_PLUS = "safe_plus"
+    PRO = "pro"
+    SOFTWELL = "softwell"
+    # Documented with a different command set, or not known at all: only the
+    # info commands every page shares.
+    OTHER = "other"
+
+
+FAMILIES = FamilyConstants()
+
+# Device type (first byte of FF00) -> family, as listed in
+# https://judo.eu/ftp-upload/download/REST-API/RESTAPI_Kommandos.pdf
+FAMILY_OF_TYPE: dict[int, str] = {
+    0x32: FAMILIES.I_SOFT,
+    0x53: FAMILIES.I_SOFT,
+    0x43: FAMILIES.I_SOFT,
+    0x54: FAMILIES.I_SOFT,
+    0x33: FAMILIES.SAFE_PLUS,
+    0x57: FAMILIES.SAFE_PLUS,
+    0x42: FAMILIES.SAFE_PLUS,
+    0x67: FAMILIES.SAFE_PLUS,
+    0x58: FAMILIES.PRO,
+    0x4B: FAMILIES.PRO,
+    0x4C: FAMILIES.PRO,
+    0x34: FAMILIES.SOFTWELL,
+    0x59: FAMILIES.SOFTWELL,
+    0x35: FAMILIES.SOFTWELL,
+    0x63: FAMILIES.SOFTWELL,
+    0x36: FAMILIES.SOFTWELL,
+    0x5A: FAMILIES.SOFTWELL,
+    0x47: FAMILIES.SOFTWELL,
+    0x62: FAMILIES.SOFTWELL,
+    0x48: FAMILIES.SOFTWELL,
+    0x64: FAMILIES.SOFTWELL,
+}
+
+# Documented, but with a command set of their own. They must never get the
+# softener items.
+FOREIGN_TYPES = frozenset({0x3C, 0x3D, 0x41, 0x44, 0x68})
+
+
+def family_of(devicetype: str | None) -> str:
+    """Return the family of a device type as read from FF00 ("33", "58", ...).
+
+    A softener type the document does not list (an older i-soft safe, a
+    QUICKSOFT) keeps the i-soft command set it was always served with. Unknown
+    ids and the leakage, dosing and filling devices only get the info items.
+    """
+    try:
+        number = int(devicetype or "", 16)
+    except ValueError:
+        return FAMILIES.OTHER
+    if number in FAMILY_OF_TYPE:
+        return FAMILY_OF_TYPE[number]
+    if number in FOREIGN_TYPES or devicetype.upper() not in DEVICETYPES:
+        return FAMILIES.OTHER
+    return FAMILIES.I_SOFT
 
 COMMANDS = {
     "Geraetetyp": "FF00",

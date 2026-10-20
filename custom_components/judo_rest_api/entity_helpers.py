@@ -6,6 +6,8 @@ from .items import RestItem
 from .const import TYPES
 from .coordinator import MyCoordinator
 from .entities import (
+    MyBitfieldSelectEntity,
+    MyBitfieldSwitchEntity,
     MyButtonEntity,
     MyLocalSelectEntity,
     MyNumberEntity,
@@ -29,7 +31,7 @@ async def build_entity_list(
     function builds a list of entities that can be used as parameter by async_setup_entry()
     type of list is defined by the RestItem's type flag
     so the app only holds one list of entities that is build from a list of RestItem
-    stored in hpconst.py so far, will be provided by an external file in future
+    stored in jdconst.py, narrowed by the coordinator to the device's family
 
     :param config_entry: HASS config entry
     :type config_entry: MyConfigEntry
@@ -69,6 +71,14 @@ async def build_entity_list(
                 case TYPES.BUTTON:
                     entries.append(
                         MyButtonEntity(config_entry, item, coordinator, index)
+                    )
+                case TYPES.BITFIELD_SELECT:
+                    entries.append(
+                        MyBitfieldSelectEntity(config_entry, item, coordinator, index)
+                    )
+                case TYPES.BITFIELD_SWITCH:
+                    entries.append(
+                        MyBitfieldSwitchEntity(config_entry, item, coordinator, index)
                     )
 
     return entries

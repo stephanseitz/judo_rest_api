@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import logging
 
+from typing import Any
+
 from homeassistant.components.button import ButtonEntity
-from homeassistant.components.number import NumberEntity
+from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.components.select import SelectEntity
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -17,9 +21,24 @@ from .configentry import MyConfigEntry
 from .const import CONF, CONST, FORMATS, TYPES
 from .coordinator import MyCoordinator
 from .items import RestItem
-from .restobject import JudoApiError, JudoDecodeError, RestObject
+from .restobject import (
+    JudoApiError,
+    JudoDecodeError,
+    RestObject,
+    decode_day_statistics,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+# Labels of the eight buckets of the day statistics, 00:00-03:00 first.
+DAY_BUCKETS = [f"{hour:02d}:00-{hour + 3:02d}:00" for hour in range(0, 24, 3)]
+
+
+def unique_id_of(config_entry: MyConfigEntry, rest_item: RestItem) -> str:
+    """Return the unique id an entity for this item gets in this entry."""
+    postfix = config_entry.data.get(CONF.DEVICE_POSTFIX, "")
+    device = rest_item.device + ("_" + postfix if postfix else "")
+    return CONST.DOMAIN + "_" + device + "_" + rest_item.translation_key
 
 
 class MyEntity(CoordinatorEntity[MyCoordinator]):
@@ -60,9 +79,7 @@ class MyEntity(CoordinatorEntity[MyCoordinator]):
 
         self._attr_translation_key = self._rest_item.translation_key
         self._attr_entity_category = self._rest_item.entity_category
-        self._attr_unique_id = (
-            CONST.DOMAIN + "_" + self._dev_device + "_" + self._rest_item.translation_key
-        )
+        self._attr_unique_id = unique_id_of(self._config_entry, self._rest_item)
 
         params = self._rest_item.params or {}
         self._divider = params.get("divider", 1)
@@ -149,18 +166,69 @@ class MySensorEntity(MyEntity, SensorEntity):
         """Return the sensor value."""
         return self._item_value
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the 3-hour buckets behind the day's water consumption.
 
-class MyNumberEntity(MyEntity, NumberEntity):  # pylint: disable=W0223
+        They only change when the total does, so unlike the raw payloads that
+        used to sit here they add no recorder rows of their own.
+        """
+        if self._rest_item.format is not FORMATS.DAY_STATISTICS:
+            return None
+        item_value = (self._coordinator.data or {}).get(self._rest_item.key)
+        if item_value is None:
+            return None
+        try:
+            buckets = decode_day_statistics(item_value.raw)
+        except (JudoDecodeError, ValueError):
+            return None
+        return dict(zip(DAY_BUCKETS, buckets, strict=True))
+
+
+class MyNumberEntity(MyEntity, NumberEntity, RestoreEntity):  # pylint: disable=W0223
     """Represent a Number Entity.
 
     Class that represents a number entity derived from NumberEntity
-    and decorated with general parameters from MyEntity
+    and decorated with general parameters from MyEntity.
+
+    An item without a read command cannot be asked for its value: the SAFE+
+    answers the leakage limits with an empty payload. Such a number shows what
+    was last written from here, restored after a restart, and is marked as an
+    assumed state so the UI does not present it as a reading.
     """
+
+    def __init__(
+        self,
+        config_entry: MyConfigEntry,
+        rest_item: RestItem,
+        coordinator: MyCoordinator,
+        idx=None,
+    ) -> None:
+        """Initialize MyNumberEntity."""
+        super().__init__(config_entry, rest_item, coordinator, idx)
+        self._write_only = rest_item.address_read is None
+        self._attr_assumed_state = self._write_only
+        if (rest_item.params or {}).get("mode") == "box":
+            self._attr_mode = NumberMode.BOX
 
     @property
     def native_value(self):
         """Return the number value."""
         return self._item_value
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the value last written, for a number that cannot be read."""
+        await super().async_added_to_hass()
+        if not self._write_only or self._item_value is not None:
+            return
+        last_state = await self.async_get_last_state()
+        if last_state is None or last_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            return
+        try:
+            value = float(last_state.state)
+        except ValueError:
+            return
+        self._coordinator.async_set_value(self._rest_item.key, value)
 
     async def async_set_native_value(self, value: float) -> None:
         """Write the value to the device and refresh HA."""
@@ -221,10 +289,19 @@ class MySelectEntity(MyEntity, SelectEntity):  # pylint: disable=W0223
         return self._item_value
 
     async def async_select_option(self, option: str) -> None:
-        """Write the selected option to the device and refresh HA."""
+        """Write the selected option to the device and refresh HA.
+
+        Only a write-only select adds to the current value - that was the
+        salt refill, where the option is the amount poured in. A select that
+        reads its value back sets it: adding there wrote the sum of the old
+        and the new option, so picking "ppm" (4) with "°eH" (1) set sent 5.
+        """
         ro = RestObject(self._rest_api, self._rest_item)
         try:
-            await ro.async_add(option)
+            if self._rest_item.type == TYPES.SELECT_NOIF:
+                await ro.async_add(option)
+            else:
+                await ro.async_write(option)
         except (JudoApiError, JudoDecodeError) as err:
             raise HomeAssistantError(
                 f"Could not set {self._rest_item.translation_key}: {err}"
@@ -350,3 +427,112 @@ class MySceneEntity(MyEntity, SelectEntity):  # pylint: disable=W0223
             ) from err
         _LOGGER.info("Activated water scene %s for 0x%04X", option, duration)
         await self._coordinator.async_request_refresh()
+
+
+class MyBitfieldMixin(MyEntity):
+    """One part of a bitfield that is written as a whole but cannot be read.
+
+    Command 41 of the SAFE+ holds the holiday mode in bits 0..3 and three
+    leakage settings in bits 5..7, and the device answers it with an empty
+    payload. Sending one part means sending all of them, so the byte is
+    assembled from what Home Assistant knows about each part. While a part is
+    unknown nothing is sent: guessing it would silently switch off a micro
+    leakage setting made in the app. The parts are restored after a restart.
+    """
+
+    _attr_assumed_state = True
+
+    @property
+    def available(self) -> bool:
+        """Follow the device, not a reading: there is none."""
+        return self.coordinator.last_update_success
+
+    async def _async_restore(self, restore) -> None:
+        """Put the value back that was set before the restart."""
+        if self._item_value is not None:
+            return
+        last_state = await self.async_get_last_state()
+        if last_state is None or last_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            return
+        value = restore(last_state.state)
+        if value is not None:
+            self._coordinator.async_set_value(self._rest_item.key, value)
+
+    async def _async_set_part(self, value) -> None:
+        """Record a new value for this part and send the byte if complete."""
+        name = self._rest_item.params["bitfield"]
+        byte, missing = self._coordinator.compose_bitfield(name, self._rest_item, value)
+        if byte is None:
+            # Remember it, so the parts can be set one after the other, but
+            # say clearly that the device has not been told yet.
+            self._coordinator.async_set_value(self._rest_item.key, value)
+            raise HomeAssistantError(
+                "Saved, but not sent to the device yet: command 41 always "
+                "writes all of its settings at once and the device cannot "
+                "report them. Set these to match the Judo app first: "
+                + ", ".join(item.translation_key for item in missing)
+            )
+        ro = RestObject(self._rest_api, self._rest_item)
+        try:
+            await ro.async_write_byte(byte)
+        except JudoApiError as err:
+            raise HomeAssistantError(
+                f"Could not write {self._rest_item.translation_key}: {err}"
+            ) from err
+        _LOGGER.info("Wrote %s: command 41 = 0x%02X", self._rest_item.translation_key, byte)
+        self._coordinator.async_set_value(self._rest_item.key, value)
+
+
+class MyBitfieldSelectEntity(MyBitfieldMixin, SelectEntity, RestoreEntity):  # pylint: disable=W0223
+    """The part of a bitfield that is one of several options (holiday mode)."""
+
+    def __init__(
+        self,
+        config_entry: MyConfigEntry,
+        rest_item: RestItem,
+        coordinator: MyCoordinator,
+        idx,
+    ) -> None:
+        """Initialize MyBitfieldSelectEntity."""
+        super().__init__(config_entry, rest_item, coordinator, idx)
+        self._attr_options = [item.translation_key for item in rest_item.resultlist or []]
+
+    @property
+    def current_option(self):
+        """Return the option last sent, or None while unknown."""
+        value = self._item_value
+        return value if value in self._attr_options else None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the option set before the restart."""
+        await super().async_added_to_hass()
+        await self._async_restore(
+            lambda state: state if state in self._attr_options else None
+        )
+
+    async def async_select_option(self, option: str) -> None:
+        """Send the bitfield with this option."""
+        await self._async_set_part(option)
+
+
+class MyBitfieldSwitchEntity(MyBitfieldMixin, SwitchEntity, RestoreEntity):  # pylint: disable=W0223
+    """The part of a bitfield that is a single bit."""
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the bit last sent, or None while unknown."""
+        value = self._item_value
+        return None if value is None else bool(value)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the bit set before the restart."""
+        await super().async_added_to_hass()
+        await self._async_restore(lambda state: state == STATE_ON)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Send the bitfield with this bit set."""
+        await self._async_set_part(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Send the bitfield with this bit cleared."""
+        await self._async_set_part(False)

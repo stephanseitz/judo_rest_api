@@ -13,7 +13,7 @@ from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .configentry import MyConfigEntry
-from .const import CONF, CONST, FORMATS, TYPES
+from .const import CONF, CONST, FAMILIES, FORMATS, TYPES, family_of
 from .items import RestItem
 from .restobject import (
     ItemValue,
@@ -73,8 +73,19 @@ class MyCoordinator(DataUpdateCoordinator[dict[str, ItemValue]]):
             always_update=False,
         )
         self._rest_api = my_api
-        self._restitems = api_items
-        self._readable = [item for item in api_items if self._is_readable(item)]
+        self._all_items = api_items
+        # Narrowed to the device's family once its type is known, in
+        # _async_setup. Until then nothing is polled.
+        self._family = FAMILIES.OTHER
+        self._restitems: list[RestItem] = []
+        self._readable: list[RestItem] = []
+        # Items without a read command (write-only numbers, the bitfield of
+        # command 41, the scene duration). A scan rebuilds the data from what
+        # it read, so their values are carried over from one scan to the next.
+        self._local_keys: set[str] = set()
+        # key -> monotonic time of the last fetch, for items polled less often
+        # than every scan.
+        self._last_fetch: dict[str, float] = {}
         self._config_entry = p_config_entry
         self._cached_device_info: dict[str, Any] = {}
         self._translations: dict[str, str] | None = None
@@ -137,10 +148,85 @@ class MyCoordinator(DataUpdateCoordinator[dict[str, ItemValue]]):
         data[key] = ItemValue(value, previous.raw if previous else "")
         self.async_set_updated_data(data)
 
+    def _select_items(self, devicetype: str | None) -> None:
+        """Keep the items the device's family knows, drop the others."""
+        self._family = family_of(devicetype)
+        self._restitems = [item for item in self._all_items if item.supports(self._family)]
+        self._readable = [item for item in self._restitems if self._is_readable(item)]
+        self._local_keys = {
+            item.key for item in self._restitems if not self._is_readable(item)
+        }
+        _LOGGER.debug(
+            "Device type %s is family %s: %s items, %s polled",
+            devicetype,
+            self._family,
+            len(self._restitems),
+            len(self._readable),
+        )
+
+    @property
+    def family(self) -> str:
+        """Return the device family the items were chosen for."""
+        return self._family
+
+    @property
+    def items(self) -> list[RestItem]:
+        """Return the items this device knows."""
+        return self._restitems
+
+    @property
+    def all_items(self) -> list[RestItem]:
+        """Return every item, of every family."""
+        return self._all_items
+
+    def _is_due(self, rest_item: RestItem, now: float) -> bool:
+        """Return whether an item with its own poll interval is to be fetched."""
+        interval = (rest_item.params or {}).get("poll_interval")
+        if not interval or rest_item.key not in (self.data or {}):
+            return True
+        return now - self._last_fetch.get(rest_item.key, 0.0) >= interval
+
+    def bitfield_items(self, name: str) -> list[RestItem]:
+        """Return the items that together make up one bitfield."""
+        return [
+            item
+            for item in self._restitems
+            if (item.params or {}).get("bitfield") == name
+        ]
+
+    def compose_bitfield(
+        self, name: str, changed: RestItem, value: Any
+    ) -> tuple[int | None, list[RestItem]]:
+        """Assemble a bitfield byte with one part set to a new value.
+
+        Returns the byte and an empty list, or None and the parts whose
+        current value is unknown. A part is a select whose options carry the
+        bits, or a switch that sets its mask when on.
+        """
+        byte = 0
+        missing = []
+        for item in self.bitfield_items(name):
+            part = value if item.key == changed.key else self.value_of(item.key)
+            if part is None:
+                missing.append(item)
+                continue
+            mask = item.params["mask"]
+            if item.type == TYPES.BITFIELD_SWITCH:
+                byte |= mask if part else 0
+                continue
+            number = item.get_number_from_translation_key(part)
+            if number is None or number < 0:
+                # An option that is not in the list must not turn into -1,
+                # which masked sets every bit the part owns.
+                missing.append(item)
+                continue
+            byte |= number & mask
+        return (None if missing else byte), missing
+
     async def _async_setup(self) -> None:
         """Verify the device answers before any entity is created."""
         try:
-            await self._rest_api.async_connect()
+            devicetype = await self._rest_api.async_connect()
         except JudoAuthError as err:
             # Say what actually happened. "Cannot reach device" for a 401 sent
             # us looking for a network problem although the device was
@@ -156,6 +242,7 @@ class MyCoordinator(DataUpdateCoordinator[dict[str, ItemValue]]):
             # ConfigEntryNotReady, so HA retries instead of loading a broken
             # integration.
             raise UpdateFailed(f"Cannot reach Judo device: {err}") from err
+        self._select_items(devicetype)
 
     async def _async_update_data(self) -> dict[str, ItemValue]:
         """Fetch all values from the REST API.
@@ -168,9 +255,14 @@ class MyCoordinator(DataUpdateCoordinator[dict[str, ItemValue]]):
         data: dict[str, ItemValue] = {}
         errors: dict[str, tuple[str | None, str]] = {}
         raw_cache: dict[str, tuple[str | None, JudoApiError | None]] = {}
-        deadline = monotonic() + self._budget
+        started = monotonic()
+        deadline = started + self._budget
+        read_ok = 0
 
         for item in self._readable:
+            if not self._is_due(item, started):
+                data[item.key] = self.data[item.key]
+                continue
             if monotonic() > deadline and item.address_read not in raw_cache:
                 _LOGGER.warning(
                     "Scan budget of %s s exhausted after %s of %s items; "
@@ -200,6 +292,7 @@ class MyCoordinator(DataUpdateCoordinator[dict[str, ItemValue]]):
                         raise
                     raw_cache[item.address_read] = (raw, None)
                 value = rest_object.decode(raw)
+                self._last_fetch[item.key] = started
                 previous = (self.data or {}).get(item.key)
                 if previous is not None and self._is_noise(item, previous.value, value):
                     # Carry the previous entry over unchanged, so the new data
@@ -207,6 +300,7 @@ class MyCoordinator(DataUpdateCoordinator[dict[str, ItemValue]]):
                     data[item.key] = previous
                 else:
                     data[item.key] = ItemValue(value, raw)
+                read_ok += 1
             except (JudoApiError, JudoDecodeError) as err:
                 # Keep the payload: for a decode failure it is the only thing
                 # that says why, and it is what diagnostics reports.
@@ -214,7 +308,11 @@ class MyCoordinator(DataUpdateCoordinator[dict[str, ItemValue]]):
 
         self._last_errors = errors
 
-        if not data:
+        for key in self._local_keys:
+            if self.data and key in self.data:
+                data[key] = self.data[key]
+
+        if not read_ok:
             raise UpdateFailed(
                 "No value could be read from the Judo device: "
                 + (

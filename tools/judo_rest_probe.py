@@ -58,19 +58,29 @@ COMMANDS = {
     "Salzreichweite": "5700",
     "Gesamtwassermenge": "2800",
     "Weichwassermenge": "2900",
+    "Haerteeinheit": "2300",
     # Needs device software newer than 1.5.31 on the i-soft PRO family.
     "Geraetestatus": "6900",
 }
 
-# The statistics commands need a date appended: day, month, year as 2 bytes
-# little-endian. Without it the device answers empty, and FE00 answers with a
-# chunked body whose framing is broken, which takes the HTTP client down.
+# The statistics commands need a date appended, and each wants a different
+# one: FB the day, FC the calendar week, FD the month, FE only the year -
+# always followed by the year as 2 bytes. Without it the device answers empty,
+# and FE00 answers with a chunked body whose framing is broken, which takes
+# the HTTP client down.
+#
+# The byte order of that year differs by family. The PRO page writes it
+# little-endian (FB001506E807 = 21.06.2024), every other page big-endian
+# (FB000D0807E7 = 13.08.2023), and an i-soft SAFE+ answers the little-endian
+# form with zeros only.
 STATISTICS = {
     "Tagesstatistik": "FB00",
     "Wochenstatistik": "FC00",
     "Monatsstatistik": "FD00",
     "Jahresstatistik": "FE00",
 }
+
+PRO_TYPES = {"58", "4B", "4C"}
 
 
 # http.client.IncompleteRead is an HTTPException, not an OSError, so it used to
@@ -109,9 +119,17 @@ def fetch(
     raise RuntimeError("unreachable")
 
 
-def date_suffix(day: datetime.date) -> str:
-    """Encode a date the way the statistics commands expect it."""
-    return f"{day.day:02X}{day.month:02X}{day.year & 0xFF:02X}{day.year >> 8:02X}"
+def date_suffix(code: str, day: datetime.date, year_endian: str) -> str:
+    """Encode the date argument of a statistics command."""
+    year = day.year.to_bytes(2, year_endian).hex().upper()  # type: ignore[arg-type]
+    match code:
+        case "FB00":
+            return f"{day.day:02X}{day.month:02X}{year}"
+        case "FC00":
+            return f"{day.isocalendar().week:02X}{year}"
+        case "FD00":
+            return f"{day.month:02X}{year}"
+    return year
 
 
 def describe_scene(raw: str) -> str:
@@ -227,6 +245,13 @@ def main() -> int:
         help="also query the statistics commands for today's date",
     )
     parser.add_argument(
+        "--year-endian",
+        choices=("auto", "big", "little"),
+        default="auto",
+        help="byte order of the year in the statistics date; auto picks "
+        "little for the i-soft PRO family and big for everything else",
+    )
+    parser.add_argument(
         "--scenes",
         action="store_true",
         help="also read the scene settings (i-soft PRO family only)",
@@ -237,23 +262,33 @@ def main() -> int:
     token = base64.b64encode(f"{args.username}:{args.password}".encode()).decode()
     auth_header = f"Basic {token}"
 
-    today = datetime.date.today()
-    queries = dict(COMMANDS)
-    if args.statistics:
-        queries.update(
-            {name: code + date_suffix(today) for name, code in STATISTICS.items()}
-        )
-
-    width = max(len(name) for name in queries)
-    for name, command in queries.items():
+    width = max(len(name) for name in (*COMMANDS, *STATISTICS))
+    devicetype = ""
+    for name, command in COMMANDS.items():
         try:
             data = fetch(base_url, command, auth_header, args.timeout, args.delay)
         except FETCH_ERRORS as err:
             print(f"{name:{width}}  {command}  !! {err}")
             continue
         print(f"{name:{width}}  {command}  {data}")
+        if command == "FF00":
+            devicetype = data[0:2].upper()
         if command == "6900":
             print(f"{'':{width}}  {'':4}  {describe_status(data)}")
+
+    if args.statistics:
+        year_endian = args.year_endian
+        if year_endian == "auto":
+            year_endian = "little" if devicetype in PRO_TYPES else "big"
+        today = datetime.date.today()
+        for name, code in STATISTICS.items():
+            command = code + date_suffix(code, today, year_endian)
+            try:
+                data = fetch(base_url, command, auth_header, args.timeout, args.delay)
+            except FETCH_ERRORS as err:
+                print(f"{name:{width}}  {command}  !! {err}")
+                continue
+            print(f"{name:{width}}  {command}  {data}")
 
     if args.scenes:
         read_scenes(base_url, auth_header, args.timeout, args.delay)

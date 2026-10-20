@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import dt as dt_util
 
 from .configentry import MyConfigEntry
 from .const import CONF, CONST, DEVICETYPES, FORMATS, TYPES
@@ -166,6 +167,47 @@ def _decode_date(field: str) -> date:
         raise JudoDecodeError(f"date: {day:02d}.{month:02d}.{year} is not a date") from err
 
 
+def _decode_timestamp_date(field: str) -> date:
+    """Decode the 4 byte commissioning date of the i-soft family.
+
+    Unix time, big-endian. An i-soft SAFE+ answers with the 17.01.2021, which
+    is exactly as many days ago as its operating day counter says, and which
+    the original integration showed by reading the field as a timestamp. The
+    day/month/year layout of the PRO family makes no sense on it.
+    """
+    seconds = int.from_bytes(bytes.fromhex(field), "big")
+    if not seconds:
+        raise JudoDecodeError("date: no commissioning date set")
+    try:
+        return datetime.fromtimestamp(seconds, UTC).date()
+    except (OverflowError, OSError, ValueError) as err:
+        raise JudoDecodeError(f"date: {seconds} is not a timestamp") from err
+
+
+def decode_day_statistics(raw: str) -> list[int]:
+    """Decode the answer of command FB into litres per 3-hour bucket.
+
+    Eight values of 4 bytes, 00:00-03:00 first. Big-endian, unlike the water
+    counters of commands 28 and 29: an i-soft SAFE+ answered
+    0000000a 00000000 00000093 ... - 10 l, 0 l, 147 l, which is what the Judo
+    app shows for the same day.
+    """
+    data = bytes.fromhex(raw)
+    if len(data) < 32:
+        raise JudoDecodeError(f"day statistics: expected 32 bytes, got {raw!r}")
+    return [int.from_bytes(data[i : i + 4], "big") for i in range(0, 32, 4)]
+
+
+def statistics_day(day: date) -> str:
+    """Encode a date the way command FB of the i-soft family expects it.
+
+    Day, month, then the year big-endian: the document's FB000D0807E7 is the
+    13.08.2023. The year little-endian - the PRO page's form - names a day
+    some 58000 years away and is answered with zeros.
+    """
+    return f"{day.day:02X}{day.month:02X}{day.year:04X}"
+
+
 def decode_item(rest_item: RestItem, raw: str, divider: float = 1) -> Any:
     """Decode the raw payload of a read command into the item's value.
 
@@ -199,6 +241,10 @@ def decode_item(rest_item: RestItem, raw: str, divider: float = 1) -> Any:
             return _decode_sw_version(field)
         case FORMATS.DATE:
             return _decode_date(field)
+        case FORMATS.TIMESTAMP_DATE:
+            return _decode_timestamp_date(field)
+        case FORMATS.DAY_STATISTICS:
+            return sum(decode_day_statistics(field))
         case FORMATS.DURATION:
             return _decode_operating_time(field, rest_item.read_endian)
         case FORMATS.TEXT:
@@ -370,7 +416,11 @@ class RestObject:
         """Fetch the raw payload of this item without decoding it."""
         if self._rest_item.format is FORMATS.BUTTON:
             raise JudoDecodeError(f"{self._rest_item.translation_key} is write only")
-        return await self._rest_api.async_get(self._rest_item.address_read)
+        command = self._rest_item.address_read
+        if self._rest_item.format is FORMATS.DAY_STATISTICS:
+            # Without a date the device answers empty.
+            command += statistics_day(dt_util.now().date())
+        return await self._rest_api.async_get(command)
 
     def decode(self, raw: str):
         """Decode a raw payload for this item."""
@@ -432,6 +482,12 @@ class RestObject:
 
         await self._rest_api.async_set(self._rest_item.address_write, towrite)
         return value
+
+    async def async_write_byte(self, value: int) -> None:
+        """Send one raw byte, for items whose value is assembled elsewhere."""
+        if not 0x00 <= value <= 0xFF:
+            raise JudoApiError(f"{self._rest_item.translation_key}: {value} is not a byte")
+        await self._rest_api.async_set(self._rest_item.address_write, f"{value:02X}")
 
     async def async_add(self, value) -> Any:
         """Add a value to the one currently stored in the device."""
