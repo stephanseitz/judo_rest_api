@@ -1,9 +1,13 @@
-# Judo REST API for Home Assistant
+<p align="center">
+  <img src="https://raw.githubusercontent.com/stephanseitz/judo_rest_api/main/visuals/banner.png" alt="Judo REST API for Home Assistant – local control of JUDO water softeners" width="100%">
+</p>
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
-[![Release](https://img.shields.io/github/v/release/stephanseitz/judo_rest_api)](https://github.com/stephanseitz/judo_rest_api/releases)
-[![Tests](https://github.com/stephanseitz/judo_rest_api/actions/workflows/tests.yml/badge.svg)](https://github.com/stephanseitz/judo_rest_api/actions/workflows/tests.yml)
-![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue)
+<p align="center">
+  <a href="https://hacs.xyz/docs/faq/custom_repositories"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg" alt="HACS Custom"></a>
+  <a href="https://github.com/stephanseitz/judo_rest_api/releases"><img src="https://img.shields.io/github/v/release/stephanseitz/judo_rest_api" alt="Release"></a>
+  <a href="https://github.com/stephanseitz/judo_rest_api/actions/workflows/tests.yml"><img src="https://github.com/stephanseitz/judo_rest_api/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue" alt="Home Assistant 2024.11+">
+</p>
 
 Monitor and control a **Judo water softener** locally through the REST API of its [connectivity module](https://judo.eu/produkte/connectivity-modul-wlan/) – no cloud, no app needed.
 
