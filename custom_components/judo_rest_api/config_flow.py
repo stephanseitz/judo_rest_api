@@ -3,13 +3,13 @@
 from types import SimpleNamespace
 from typing import Any
 
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries, exceptions
-import homeassistant.helpers.config_validation as cv
 from homeassistant.core import HomeAssistant
 
 from .const import CONF, CONST
-from .restobject import JudoApiError, RestAPI
+from .restobject import JudoApiError, JudoAuthError, RestAPI
 
 SCAN_INTERVAL_SELECTOR = vol.All(vol.Coerce(int), vol.Range(min=CONST.MIN_SCAN_INTERVAL))
 
@@ -26,6 +26,9 @@ async def validate_input(hass: HomeAssistant, data: dict) -> dict[str, Any]:
     rest_api = RestAPI(config_entry=SimpleNamespace(data=data), hass=hass)
     try:
         await rest_api.async_connect()
+    except JudoAuthError as err:
+        # A refused password is not a connection problem: the device answered.
+        raise InvalidAuth(str(err)) from err
     except JudoApiError as err:
         raise ConnectionFailed(str(err)) from err
 
@@ -49,6 +52,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
             if entry.data.get(CONF.DEVICE_POSTFIX, "") == postfix:
                 return True
         return False
+
+    def _host_in_use(self, host: str, ignore_entry_id: str) -> bool:
+        """Return whether another entry already polls this host."""
+        return any(
+            entry.unique_id == host
+            for entry in self._async_current_entries()
+            if entry.entry_id != ignore_entry_id
+        )
     # Pick one of the available connection classes in homeassistant/config_entries.py
     # This tells HA if it should be asking for updates, or it'll be notified of updates
     # automatically. This example uses PUSH, as the dummy hub will notify HA of
@@ -101,6 +112,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
                     return self.async_create_entry(title=info["title"], data=user_input)
                 except InvalidHost:
                     errors[CONF.HOST] = "invalid_host"
+                except InvalidAuth:
+                    errors["base"] = "invalid_auth"
                 except ConnectionFailed:
                     errors["base"] = "cannot_connect"
 
@@ -130,18 +143,24 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
         )
 
         if user_input:
-            if self._postfix_in_use(
-                user_input.get(CONF.DEVICE_POSTFIX, ""), reconfigure_entry.entry_id
-            ):
-                errors[CONF.DEVICE_POSTFIX] = "postfix_in_use"
+            host = str(user_input.get(CONF.HOST, reconfigure_entry.data[CONF.HOST]))
+            if self._host_in_use(host, reconfigure_entry.entry_id):
+                errors[CONF.HOST] = "host_in_use"
             else:
                 try:
                     await validate_input(self.hass, {**reconfigure_entry.data, **user_input})
+                    # The unique id is the host. Left at the old one, the old
+                    # address stayed blocked for any new device, while a second
+                    # entry for this device at its new address was let through.
                     return self.async_update_reload_and_abort(
-                        entry=reconfigure_entry, data_updates=user_input
+                        entry=reconfigure_entry,
+                        unique_id=host,
+                        data_updates=user_input,
                     )
                 except InvalidHost:
                     errors[CONF.HOST] = "invalid_host"
+                except InvalidAuth:
+                    errors["base"] = "invalid_auth"
                 except ConnectionFailed:
                     errors["base"] = "cannot_connect"
 
@@ -159,11 +178,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
                 vol.Optional(
                     schema=CONF.PASSWORD, default=reconfigure_entry.data[CONF.PASSWORD]
                 ): str,
-                # reconfigure of device postfix leads to duplicated devices
-                vol.Optional(
-                    schema=CONF.DEVICE_POSTFIX,
-                    default=reconfigure_entry.data[CONF.DEVICE_POSTFIX],
-                ): str,
+                # No device postfix here. It is part of every unique id, and
+                # changing it orphaned all entities and their history.
                 vol.Optional(
                     schema=CONF.SCAN_INTERVAL,
                     default=int(
@@ -186,7 +202,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
                 CONF.PORT: "port",
                 CONF.USERNAME: "username",
                 CONF.PASSWORD: "password",
-                CONF.DEVICE_POSTFIX: "Device-Postfix",
                 CONF.SCAN_INTERVAL: "scan_interval",
             },
         )
@@ -197,4 +212,8 @@ class InvalidHost(exceptions.HomeAssistantError):
 
 
 class ConnectionFailed(exceptions.HomeAssistantError):
-    """Error to indicate there is an invalid hostname."""
+    """Error to indicate the device could not be reached."""
+
+
+class InvalidAuth(exceptions.HomeAssistantError):
+    """Error to indicate the device refused the credentials."""

@@ -111,7 +111,7 @@ def fetch(
         if delay:
             time.sleep(delay)
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read().decode())["data"]
         except (urllib.error.URLError, OSError, http.client.HTTPException):
             if attempt:

@@ -1,14 +1,16 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Account ist bereits konfiguriert"
+      "already_configured": "Account ist bereits konfiguriert",
+      "reconfigure_successful": "Die Konfiguration wurde erfolgreich geändert"
     },
     "error": {
       "cannot_connect": "Verbindung fehlgeschlagen",
       "invalid_auth": "Authentifizierung fehlerhaft",
       "unknown": "Unerwarteted Fehler",
       "invalid_host": "Hostname oder IP-Adresse ist ungültig",
-      "postfix_in_use": "Dieses Device-Postfix wird bereits von einem anderen Eintrag verwendet. Jedes Gerät braucht ein eigenes Postfix."
+      "postfix_in_use": "Dieses Device-Postfix wird bereits von einem anderen Eintrag verwendet. Jedes Gerät braucht ein eigenes Postfix.",
+      "host_in_use": "Dieser Host wird bereits von einem anderen Eintrag verwendet."
     },
     "step": {
       "user": {
@@ -27,7 +29,6 @@
       },
       "reconfigure": {
         "data": {
-          "Device-Postfix": "Device postfix",
           "scan_interval": "API-Abfrageintervall (standard = 60 s)",
           "host": "Hostname oder IP Adresse",
           "port": "HTTP Port",
