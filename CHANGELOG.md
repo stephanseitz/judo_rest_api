@@ -2,6 +2,13 @@
 
 Release notes for every version, newest first. Versions up to 1.3.2 were released by [ischraub](https://github.com/ischraub/judo_rest_api) and [OStrama](https://github.com/OStrama/judo_rest_api); from 1.4.0 on they are also on the [releases page](https://github.com/stephanseitz/judo_rest_api/releases) of this fork.
 
+## Version 1.4.2
+Documentation only, no change to the integration itself.
+
+* New README: what the integration does, supported devices, entities per device family, installation, configuration, the one-time setup of holiday mode and leakage settings, upgrading from the original integration, and troubleshooting.
+* A banner at the top of the README.
+* The version history moved from the README to this file.
+
 ## Version 1.4.1
 Fixes from a review of the whole repository.
 
