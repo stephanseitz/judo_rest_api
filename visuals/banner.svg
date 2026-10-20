@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="title desc">
+  <title id="title">Judo REST API for Home Assistant</title>
+  <desc id="desc">Local control of JUDO water softeners in Home Assistant, without the cloud.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1f3a"/>
+      <stop offset="0.55" stop-color="#0e3a5c"/>
+      <stop offset="1" stop-color="#0f5e74"/>
+    </linearGradient>
+    <linearGradient id="drop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fdcff"/>
+      <stop offset="1" stop-color="#1f8fd6"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#41bdf5" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#41bdf5" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#41bdf5" stop-opacity="0.08"/>
+    </linearGradient>
+    <clipPath id="frame">
+      <rect width="1280" height="320" rx="24"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1280" height="320" fill="url(#sky)"/>
+
+    <!-- water lines along the bottom -->
+    <path d="M0 250 C 160 225, 320 275, 480 250 S 800 225, 960 250 S 1180 275, 1280 248 V320 H0 Z" fill="url(#wave)"/>
+    <path d="M0 278 C 180 258, 340 300, 520 278 S 860 258, 1040 280 S 1220 296, 1280 276 V320 H0 Z" fill="#41bdf5" fill-opacity="0.12"/>
+
+    <!-- drop with a house: water at home -->
+    <g transform="translate(150 60)">
+      <path d="M90 0 C 90 0, 0 98, 0 150 A 90 90 0 0 0 180 150 C 180 98, 90 0, 90 0 Z" fill="url(#drop)"/>
+      <path d="M52 158 L90 124 L128 158 V196 H52 Z" fill="none" stroke="#ffffff" stroke-width="9" stroke-linejoin="round"/>
+      <path d="M78 196 V170 H102 V196" fill="none" stroke="#ffffff" stroke-width="9" stroke-linejoin="round"/>
+      <ellipse cx="60" cy="96" rx="12" ry="24" fill="#ffffff" fill-opacity="0.35" transform="rotate(28 60 96)"/>
+    </g>
+
+    <!-- text -->
+    <g font-family="'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif">
+      <text x="400" y="138" font-size="66" font-weight="700" fill="#ffffff">Judo REST API</text>
+      <text x="402" y="186" font-size="28" fill="#cfe9f7">Local control of JUDO water softeners in Home Assistant</text>
+
+      <g font-size="20" font-weight="600" fill="#0b1f3a">
+        <rect x="402" y="214" width="138" height="36" rx="18" fill="#7fdcff"/>
+        <text x="471" y="239" text-anchor="middle">i-soft SAFE+</text>
+        <rect x="552" y="214" width="122" height="36" rx="18" fill="#7fdcff"/>
+        <text x="613" y="239" text-anchor="middle">i-soft PRO</text>
+        <rect x="686" y="214" width="146" height="36" rx="18" fill="#ffffff" fill-opacity="0.9"/>
+        <text x="759" y="239" text-anchor="middle">local polling</text>
+        <rect x="844" y="214" width="112" height="36" rx="18" fill="#ffffff" fill-opacity="0.9"/>
+        <text x="900" y="239" text-anchor="middle">no cloud</text>
+        <rect x="968" y="214" width="92" height="36" rx="18" fill="#ffffff" fill-opacity="0.9"/>
+        <text x="1014" y="239" text-anchor="middle">HACS</text>
+      </g>
+    </g>
+  </g>
+</svg>
