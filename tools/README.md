@@ -41,11 +41,18 @@ Scene numbers: 0 Alltag meistern, 1 Koerper pflegen, 2 Garten bewaessern,
 Durations listed for command 36: `000F` 15 min, `001E` 30 min, `002D` 45 min,
 `0100` 1 h, `0200` 2 h, `0600` 6 h, `0C00` 12 h, `FFFF` unlimited.
 
-The statistics commands need a date appended (day, month, year as 2 bytes
-little-endian): `/api/rest/FB001506E807` is 21.06.2024. Without it the device
-answers empty, and `FE00` answers with a chunked body whose framing is broken,
-which takes a plain HTTP client down. Pass `--statistics` to query them for
-today.
+The statistics commands need a date appended: `FB` the day and month, `FC`
+the calendar week, `FD` the month, `FE` nothing - each followed by the year as
+2 bytes. Without it the device answers empty, and `FE00` answers with a
+chunked body whose framing is broken, which takes a plain HTTP client down.
+Pass `--statistics` to query them for today.
+
+The byte order of that year depends on the family. The PRO page writes it
+little-endian (`/api/rest/FB001506E807` is 21.06.2024), every other page
+big-endian (`/api/rest/FB000D0807E7` is 13.08.2023). An i-soft SAFE+ answers
+the little-endian form with 32 zero bytes and the big-endian one with the
+day's data, so the tool picks the order from the device type (`--year-endian`
+overrides it).
 
 Read the scenes back without changing anything:
 
@@ -128,6 +135,24 @@ befuellen", are set to bypass, which is what a garden and a pool want.
 1. Its example for command 36 (`/api/rest/36000200200`) has an odd number of
    hex characters. `3600` + `02` + `0200` is the consistent form.
 2. ~~Scene numbering 0-based or 1-based~~ - settled, it is 0-based, see above.
+
+### i-soft SAFE+, device software 3.02
+
+Read on 20.10.2026 and compared with the Judo app for the same device.
+
+| Command | Answer | Decoded | App / remark |
+|---|---|---|---|
+| `0600` device number | little-endian | 205703 | 205703 |
+| `0100` SW version | | 3.02n | 3.02 |
+| `2500` operating time | days little-endian | 2102 days | exactly the days since 17.01.2021 |
+| `0E00` commissioning | unix time, big-endian | 17.01.2021 | read the same way by the original integration |
+| `2300` hardness unit | `00` | dH | dH |
+| `3E00` `3F00` `4000` `4100` | `""` (HTTP 200) | - | write only: no current value |
+| `6900`, `370000`..`370004` | HTTP 400 | - | no status, no scenes over the API, although the app shows five scenes |
+| `FB00140A07EA` | `0000000a 00000000 00000093 00000000 00000034 00000044 00000054 00000043` | 10, 0, 147, 0, 52, 68, 84, 67 l | app: 10, 0, 148, 0, 52 l by 15:00; 428 l = the day's total in HA |
+
+The statistics values are big-endian, unlike the water counters of `2800` and
+`2900`.
 
 ### Reference payloads
 
